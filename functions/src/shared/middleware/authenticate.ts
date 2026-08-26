@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { auth } from '../../config/firebase.js';
-import type { AdminRole } from '../types/roles.js';
+import type { UserRole } from '../types/roles.js';
 import { AppError } from '../utils/appError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
@@ -24,7 +24,7 @@ export const authenticate = asyncHandler(async (req: Request, _res: Response, ne
   req.user = {
     uid: decoded.uid,
     email: decoded.email ?? '',
-    role: decoded.role as AdminRole,
+    role: decoded.role as UserRole,
   };
 
   next();

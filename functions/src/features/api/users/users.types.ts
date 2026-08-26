@@ -1,24 +1,24 @@
 import type { Timestamp } from 'firebase-admin/firestore';
-import type { AdminRole } from '../../../shared/types/roles.js';
+import type { UserRole } from '../../../shared/types/roles.js';
 
-export type AdminStatus = 'active' | 'disabled';
+export type UserStatus = 'active' | 'disabled';
 
-export type AdminDoc = {
+export type UserDoc = {
   uid: string;
   name: string;
   email: string;
-  role: AdminRole;
-  status: AdminStatus;
+  role: UserRole;
+  status: UserStatus;
   mustChangePassword: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
   createdBy: string;
 };
 
-export type CreateAdminResult = {
+export type CreateUserResult = {
   uid: string;
   name: string;
   email: string;
-  role: AdminRole;
+  role: UserRole;
   tempPassword: string;
 };

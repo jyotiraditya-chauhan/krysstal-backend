@@ -3,14 +3,14 @@ import { Collections } from '../../../config/collections.js';
 import { auth, db } from '../../../config/firebase.js';
 import { AppError } from '../../../shared/utils/appError.js';
 import { generateTempPassword } from '../../../shared/utils/generatePassword.js';
-import type { AdminDoc, CreateAdminResult } from './admins.types.js';
-import type { CreateAdminInput } from './admins.validation.js';
+import type { CreateUserResult, UserDoc } from './users.types.js';
+import type { CreateUserInput } from './users.validation.js';
 
 function isFirebaseAuthError(error: unknown): error is { code: string } {
   return typeof error === 'object' && error !== null && 'code' in error;
 }
 
-export async function createAdminUser(input: CreateAdminInput, createdBy: string): Promise<CreateAdminResult> {
+export async function createUser(input: CreateUserInput, createdBy: string): Promise<CreateUserResult> {
   const tempPassword = generateTempPassword();
 
   let uid: string;
@@ -30,7 +30,7 @@ export async function createAdminUser(input: CreateAdminInput, createdBy: string
 
   await auth.setCustomUserClaims(uid, { role: input.role });
 
-  await db.collection(Collections.ADMINS).doc(uid).set({
+  await db.collection(Collections.Admins).doc(uid).set({
     uid,
     name: input.name,
     email: input.email,
@@ -45,7 +45,7 @@ export async function createAdminUser(input: CreateAdminInput, createdBy: string
   return { uid, name: input.name, email: input.email, role: input.role, tempPassword };
 }
 
-export async function listAdminUsers(): Promise<AdminDoc[]> {
-  const snapshot = await db.collection(Collections.ADMINS).orderBy('createdAt', 'desc').get();
-  return snapshot.docs.map(doc => doc.data() as AdminDoc);
+export async function listUsers(): Promise<UserDoc[]> {
+  const snapshot = await db.collection(Collections.Admins).orderBy('createdAt', 'desc').get();
+  return snapshot.docs.map(doc => doc.data() as UserDoc);
 }

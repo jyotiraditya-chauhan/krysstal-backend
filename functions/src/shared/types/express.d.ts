@@ -1,4 +1,4 @@
-import type { AdminRole } from './roles.js';
+import type { UserRole } from './roles.js';
 
 declare global {
   namespace Express {
@@ -6,7 +6,7 @@ declare global {
       user?: {
         uid: string;
         email: string;
-        role: AdminRole;
+        role: UserRole;
       };
     }
   }

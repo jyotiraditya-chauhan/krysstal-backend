@@ -1,3 +1,3 @@
 export const Collections = {
-  ADMINS: 'admins',
+  Admins: 'admins',
 } as const;

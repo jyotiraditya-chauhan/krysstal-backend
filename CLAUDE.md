@@ -24,7 +24,7 @@ functions/
     ├── index.ts                setGlobalOptions + barrel re-export of every deployed function
     ├── config/
     │   ├── firebase.ts          Admin SDK init (auth, db) — bare initializeApp()
-    │   └── collections.ts       Firestore collection name constants (Collections.ADMINS, etc.)
+    │   └── collections.ts       Firestore collection name constants (Collections.Admins, etc.)
     ├── shared/                  cross-cutting code used by more than one feature
     │   ├── errors.ts             requireAuth / requireRole guards for onCall functions (throw HttpsError)
     │   ├── middleware/            authenticate, authorize, errorHandler, notFound (Express-specific)
@@ -37,11 +37,11 @@ functions/
             └── <featureName>.types.ts       request/response types for that feature
 ```
 
-`features/api/` is the current example — an Express app (cors, `/health`, feature routers) wrapped in a single `onRequest` function named `api`. Because it's Express-routed rather than a set of standalone callables, it additionally nests `admins/` with its own `controller.ts`/`routes.ts`/`service.ts`/`types.ts`/`validation.ts` (MVC shape, appropriate for HTTP routes under one function). That nesting is specific to Express-backed features; standalone `onCall`/`onRequest`/trigger features do not need a controller or routes file — see the pattern below.
+`features/api/` is the current example — an Express app (cors, `/health`, feature routers) wrapped in a single `onRequest` function named `api`. Because it's Express-routed rather than a set of standalone callables, it additionally nests `users/` with its own `controller.ts`/`routes.ts`/`service.ts`/`types.ts`/`validation.ts` (MVC shape, appropriate for HTTP routes under one function). That nesting is specific to Express-backed features; standalone `onCall`/`onRequest`/trigger features do not need a controller or routes file — see the pattern below.
 
 ### Two shapes of feature, pick based on what the feature actually is
 
-1. **Express-routed feature** (like `api`/`admins`): many related HTTP endpoints sharing CORS/auth/error-handling middleware. Lives under one `onRequest(app)` function. New endpoints are new Express routes, not new Cloud Functions.
+1. **Express-routed feature** (like `api`/`users`): many related HTTP endpoints sharing CORS/auth/error-handling middleware. Lives under one `onRequest(app)` function. New endpoints are new Express routes, not new Cloud Functions.
 2. **Standalone function feature** (payments, shipping, etc.): each unit of work is its own `onCall` or `onRequest` Cloud Function, independently deployed/scaled. This is the shape to use for anything that isn't naturally an HTTP route tree — client-callable actions, webhooks, triggers.
 
 ### Adding a new standalone-function feature (e.g. payments, shipping)
@@ -66,6 +66,27 @@ Model this directly on `glowly-backend`'s `features/payments/` (`payments.functi
 5. Add one line to `functions/src/index.ts`: `export { createPayment, verifyPayment } from './features/payments/payments.functions.js';`
 
 A `shipping` feature (e.g. a shipment-verification function) follows the identical recipe: `shipping.types.ts` / `shipping.service.ts` / `shipping.functions.ts`, exported from `functions/src/index.ts` the same way. If shipment verification is a webhook from a carrier/payment gateway rather than a client-callable, use `onRequest` instead of `onCall` in `<name>.functions.ts` and verify the payload signature inside the service function (HMAC or whatever the provider requires) before trusting it — do not trust unauthenticated webhook bodies.
+
+## Firestore
+
+One collection today: `admins` (`Collections.Admins` in `functions/src/config/collections.ts`), doc ID = the Firebase Auth UID. It holds every staff/back-office account — Admin, Catalog Manager, Support Agent — kept deliberately separate from any future customer-facing `users` collection for the storefront, so the two never collide. Schema (`functions/src/features/api/users/users.types.ts`):
+
+```
+uid, name, email, role ('Admin' | 'Catalog Manager' | 'Support Agent'), status ('active' | 'disabled'),
+mustChangePassword, createdAt, updatedAt, createdBy
+```
+
+The `users/` feature folder name refers to the action (an Admin creating a user account) — it's the `admins` collection that action writes to. Don't let the two drift back apart.
+
+`role` also gets set as a custom claim on the Firebase Auth user (`auth.setCustomUserClaims`) at creation time — that's what `authenticate` middleware reads off the verified ID token, not a Firestore lookup.
+
+`firestore.rules` and `firestore.indexes.json` live at repo root (not inside `functions/`) — `firebase.json`'s `firestore.rules`/`firestore.indexes` fields point at them there, and `firebase deploy --only firestore` deploys them independently of functions.
+
+- **Admin SDK (all code in this backend) always bypasses security rules entirely.** Rules only gate direct access from a client SDK (a separate frontend signed in with `firebase/auth`). Since every write in this backend goes through the Admin SDK, rules for a collection this backend owns are almost always `allow write: if false` — the write path is "not the client's problem to be allowed to do," not "the client is trusted to do it."
+- Current rule for `admins`: a signed-in user may only read their own `admins/{uid}` doc; all writes are denied (`allow write: if false`), enforced via `users.service.ts`. Never relax this to allow client self-write — `role`/`status` live in the same document a user would be writing to, so client write access would let a user self-promote their own role.
+- Pattern: one explicit `match /<collection>/{id} { ... }` block per collection a client is allowed to read, followed by a catch-all `match /{document=**} { allow read, write: if false; }` that denies everything not explicitly listed above it. Keep this catch-all last — it's the default-deny backstop.
+- **When a new feature adds a Firestore collection** (e.g. a `payments` or `shipments` collection): add its name to `functions/src/config/collections.ts` first, then add a matching `match /<collection>/{id} { ... }` block in `firestore.rules` above the catch-all, scoped to only what a client genuinely needs to read directly (often nothing — if the feature is only ever read back through a callable function, no rule is needed at all beyond the default-deny).
+- **`firestore.indexes.json`** only needs an entry when a Firestore query combines multiple `where()` clauses, or a `where()` with an `orderBy()` on a different field, that Firestore can't serve from a single-field index. Today it's empty (`{"indexes": [], "fieldOverrides": []}`) because the only existing query — `db.collection(Collections.Admins).orderBy('createdAt', 'desc')` in `users.service.ts` — is a single-field sort, which Firestore indexes automatically. If a new feature's query needs a composite index, either run it once against the emulator/production and copy the exact index definition Firestore's error message gives you, or run `firebase firestore:indexes` after deploying to pull the current set, then commit the result here.
 
 ## Commands
 
