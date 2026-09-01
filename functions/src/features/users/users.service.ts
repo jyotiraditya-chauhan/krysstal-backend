@@ -1,16 +1,16 @@
 import { FieldValue } from 'firebase-admin/firestore';
-import { Collections } from '../../../config/collections.js';
-import { auth, db } from '../../../config/firebase.js';
-import { AppError } from '../../../shared/utils/appError.js';
-import { generateTempPassword } from '../../../shared/utils/generatePassword.js';
-import type { CreateUserResult, UserDoc } from './users.types.js';
+import { Collections } from '../../config/collections.js';
+import { auth, db } from '../../config/firebase.js';
+import { AppError } from '../../shared/utils/appError.js';
+import { generateTempPassword } from '../../shared/utils/generatePassword.js';
+import type { CreateUserResponse } from './users.types.js';
 import type { CreateUserInput } from './users.validation.js';
 
 function isFirebaseAuthError(error: unknown): error is { code: string } {
   return typeof error === 'object' && error !== null && 'code' in error;
 }
 
-export async function createUser(input: CreateUserInput, createdBy: string): Promise<CreateUserResult> {
+export async function createUser(input: CreateUserInput, createdBy: string): Promise<CreateUserResponse> {
   const tempPassword = generateTempPassword();
 
   let uid: string;
@@ -43,9 +43,4 @@ export async function createUser(input: CreateUserInput, createdBy: string): Pro
   });
 
   return { uid, name: input.name, email: input.email, role: input.role, tempPassword };
-}
-
-export async function listUsers(): Promise<UserDoc[]> {
-  const snapshot = await db.collection(Collections.Admins).orderBy('createdAt', 'desc').get();
-  return snapshot.docs.map(doc => doc.data() as UserDoc);
 }

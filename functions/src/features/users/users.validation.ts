@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { USER_ROLES } from '../../../shared/types/roles.js';
+import { USER_ROLES } from '../../shared/types/roles.js';
 
 export const createUserSchema = z.object({
   name: z.string().trim().min(2, 'Name must be at least 2 characters').max(80),

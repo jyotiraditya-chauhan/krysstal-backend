@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase-admin/firestore';
-import type { UserRole } from '../../../shared/types/roles.js';
+import type { UserRole } from '../../shared/types/roles.js';
 
 export type UserStatus = 'active' | 'disabled';
 
@@ -15,7 +15,13 @@ export type UserDoc = {
   createdBy: string;
 };
 
-export type CreateUserResult = {
+export type CreateUserRequest = {
+  name: string;
+  email: string;
+  role: UserRole;
+};
+
+export type CreateUserResponse = {
   uid: string;
   name: string;
   email: string;

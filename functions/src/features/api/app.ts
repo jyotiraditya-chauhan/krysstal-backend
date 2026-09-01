@@ -2,7 +2,6 @@ import cors from 'cors';
 import express from 'express';
 import { errorHandler } from '../../shared/middleware/errorHandler.js';
 import { notFound } from '../../shared/middleware/notFound.js';
-import { usersRouter } from './users/users.routes.js';
 
 const ALLOWED_ORIGINS = ['http://localhost:8080'];
 
@@ -14,8 +13,6 @@ app.use(express.json());
 app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok' });
 });
-
-app.use('/users', usersRouter);
 
 app.use(notFound);
 app.use(errorHandler);
