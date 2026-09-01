@@ -6,7 +6,7 @@ import type { CreateUserRequest, CreateUserResponse } from './users.types.js';
 import { createUserSchema } from './users.validation.js';
 
 export const createUser = onCall<CreateUserRequest, Promise<CreateUserResponse>>(async request => {
-  const uid = requireRole(request, 'Admin');
+  const uid = await requireRole(request, 'admin');
 
   const parsed = createUserSchema.safeParse(request.data);
   if (!parsed.success) {

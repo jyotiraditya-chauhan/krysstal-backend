@@ -1,5 +1,7 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import type { CallableRequest } from 'firebase-functions/v2/https';
+import { Collections } from '../config/collections.js';
+import { db } from '../config/firebase.js';
 import type { UserRole } from './types/roles.js';
 
 export function requireAuth(request: CallableRequest): string {
@@ -9,9 +11,14 @@ export function requireAuth(request: CallableRequest): string {
   return request.auth.uid;
 }
 
-export function requireRole(request: CallableRequest, ...allowedRoles: UserRole[]): string {
+export async function requireRole(request: CallableRequest, ...allowedRoles: UserRole[]): Promise<string> {
   const uid = requireAuth(request);
-  const role = request.auth?.token.role as UserRole | undefined;
+  let role = request.auth?.token.role as UserRole | undefined;
+
+  if (!role) {
+    const snapshot = await db.collection(Collections.Admins).doc(uid).get();
+    role = snapshot.data()?.role as UserRole | undefined;
+  }
 
   if (!role || !allowedRoles.includes(role)) {
     throw new HttpsError('permission-denied', 'Insufficient permissions for this action');
