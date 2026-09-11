@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Product/variant images uploaded by the admin console (src/lib/storage.ts
+    // uploadImageIfNeeded(), called from catalog-store.ts saveProduct()). Path convention:
+    // catalogs/{productUid}/{randomId} — productUid is the catalog doc's generated uid, not its
+    // display slug. Publicly readable (needed for eventual storefront/
+    // mobile display); writable only by staff whose effective role is admin or catalog_manager —
+    // same claim-then-Firestore-fallback pattern as firestore.rules' callerRole(), duplicated
+    // here since Storage rules can't share a function with Firestore rules. Keep both in sync.
+    match /catalogs/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null &&
+        ('role' in request.auth.token
+          ? request.auth.token.role
+          : firestore.get(/databases/(default)/documents/admins/$(request.auth.uid)).data.role
+        ) in ['admin', 'catalog_manager'];
+    }
+
+    // Default-deny backstop: nothing outside the explicit match blocks above is readable or
+    // writable from a client SDK.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

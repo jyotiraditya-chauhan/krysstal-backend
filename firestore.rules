@@ -2,14 +2,74 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Caller's effective role, shared by every match block below. Prefers the custom claim
+    // (cheap, no extra read); falls back to a get() of the caller's own admins/{uid} doc for
+    // accounts whose claim was never issued (e.g. a manually bootstrapped first admin). Mirrors
+    // requireRole() in functions/src/shared/errors.ts — keep both in sync if either changes.
+    function callerRole() {
+      return 'role' in request.auth.token
+        ? request.auth.token.role
+        : get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role;
+    }
+
+    // Staff/back-office accounts. Doc id = Firebase Auth uid. Only ever *written* by the Admin
+    // SDK in functions/src/features/users/users.service.ts (createUser), which bypasses these
+    // rules entirely — the rules below only govern direct reads/writes from the admin console
+    // client (krysstal-admin, using firebase/firestore).
     match /admins/{userId} {
+      // Used by:
+      //  - console-store.ts resolveProfile() — getDoc of the signed-in user's own doc on every
+      //    sign-in / auth-state change (self-read branch, uid == userId).
+      //  - roles-store.ts loadStaff() — getDocs of the whole collection to populate the Staff
+      //    table on the Roles & Permissions screen (admin-only branch, callerRole() == 'admin').
       allow read: if request.auth != null &&
-        (request.auth.uid == userId || request.auth.token.role == 'Admin');
+        (request.auth.uid == userId || callerRole() == 'admin');
+
+      // Used by console-store.ts completePasswordChange() — a signed-in user clearing their own
+      // mustChangePassword flag after the forced first-login password change. Field-scoped so a
+      // client can never touch role/status this way.
       allow update: if request.auth != null && request.auth.uid == userId &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mustChangePassword', 'updatedAt']);
+
+      // Used by roles-store.ts updateStaff() (name/role edit) and setStaffStatus() (Disable/
+      // Enable row action) on the Roles & Permissions screen — an admin editing *someone else's*
+      // doc directly from the client, no Cloud Function involved. request.auth.uid != userId
+      // blocks an admin from using this rule to self-promote or un-disable their own account —
+      // never remove that guard.
+      allow update: if request.auth != null && callerRole() == 'admin' && request.auth.uid != userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'role', 'status', 'updatedAt']);
+
+      // No client path creates or deletes a doc here: creation only happens via the Admin SDK
+      // (createUser, which bypasses rules); "delete" in the product is the soft-disable status
+      // update above, not a real doc delete.
       allow create, delete: if false;
     }
 
+    // Category tree for the catalog (categories-store.ts loadCategories/saveCategory/
+    // removeCategory in krysstal-admin). Admin and Catalog Manager both manage the catalog
+    // (roleMatrix.catalog in src/shared/model/roles.ts), so both get full read/write here —
+    // Support Agent gets neither, matching that same matrix.
+    match /categories/{id} {
+      allow read, write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
+    }
+
+    // Product-level catalog entries (catalog-store.ts loadCatalog/saveProduct/removeProduct).
+    // Doc id is a generated uid (also stored as the `uid` field) — NOT the display slug, which
+    // is a separate stable `slug` field used only for routing/URLs. Same admin/catalog_manager
+    // access as categories.
+    match /catalogs/{id} {
+      allow read, write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
+    }
+
+    // Sellable variant rows (finish/size/material combinations), joined to their catalog doc by
+    // a productUid field rather than nesting — see Krysstal_Catalog_Model.pdf. Doc id = the
+    // deterministic variantId() helper in catalog-data.ts. Same admin/catalog_manager-only access.
+    match /variants/{id} {
+      allow read, write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
+    }
+
+    // Default-deny backstop: nothing outside the explicit match blocks above is readable or
+    // writable from a client SDK.
     match /{document=**} {
       allow read, write: if false;
     }
