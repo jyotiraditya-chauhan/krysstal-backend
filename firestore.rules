@@ -46,26 +46,121 @@ service cloud.firestore {
     }
 
     // Category tree for the catalog (categories-store.ts loadCategories/saveCategory/
-    // removeCategory in krysstal-admin). Admin and Catalog Manager both manage the catalog
-    // (roleMatrix.catalog in src/shared/model/roles.ts), so both get full read/write here —
-    // Support Agent gets neither, matching that same matrix.
+    // removeCategory in krysstal-admin). Publicly readable — the Krysstal Flutter app's home
+    // screen (HomeService.fetchCategories) reads this directly to render dynamic subcategory
+    // chips per selected category, and a signed-in customer has no staff role for callerRole()
+    // to resolve, so read can't be role-gated like write. Write stays admin/catalog_manager-only
+    // (roleMatrix.catalog in src/shared/model/roles.ts) — Support Agent gets neither.
     match /categories/{id} {
-      allow read, write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
+      allow read: if true;
+      allow write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
     }
 
     // Product-level catalog entries (catalog-store.ts loadCatalog/saveProduct/removeProduct).
     // Doc id is a generated uid (also stored as the `uid` field) — NOT the display slug, which
-    // is a separate stable `slug` field used only for routing/URLs. Same admin/catalog_manager
-    // access as categories.
+    // is a separate stable `slug` field used only for routing/URLs. Publicly readable — the
+    // Krysstal Flutter app's CatalogService browses/looks up products for any customer,
+    // signed-in or not, same reasoning as categories. Write stays admin/catalog_manager only
+    // (roleMatrix.catalog in src/shared/model/roles.ts).
     match /catalogs/{id} {
-      allow read, write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
+      allow read: if true;
+      allow write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
     }
 
     // Sellable variant rows (finish/size/material combinations), joined to their catalog doc by
     // a productUid field rather than nesting — see Krysstal_Catalog_Model.pdf. Doc id = the
-    // deterministic variantId() helper in catalog-data.ts. Same admin/catalog_manager-only access.
+    // deterministic variantId() helper in catalog-data.ts. Publicly readable for the same reason
+    // as catalogs (CatalogService.fetchCatalogs/fetchCatalogById need variant pricing/stock to
+    // render a product). Write stays admin/catalog_manager only.
     match /variants/{id} {
-      allow read, write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
+      allow read: if true;
+      allow write: if request.auth != null && callerRole() in ['admin', 'catalog_manager'];
+    }
+
+    // General-purpose admin-configured settings, one doc per config topic. First user:
+    // config/homeCarousel (content-store.ts loadHomeCarousel/setHomeSlot/addCarouselImage/
+    // updateCarouselImage/removeCarouselImage in krysstal-admin) — the home screen's 3 featured
+    // categories (in order) and each category's carousel images. Publicly readable since the
+    // storefront app reads this directly to render the home screen; writable only by admin,
+    // matching roleMatrix.content in src/shared/model/roles.ts (stricter than catalog's
+    // admin+catalog_manager — Content & Promotions is admin-only).
+    match /config/{id} {
+      allow read: if true;
+      allow write: if request.auth != null && callerRole() == 'admin';
+    }
+
+    // Discount coupons (coupons-store.ts loadCoupons/saveCoupon/removeCoupon in krysstal-admin,
+    // admin-only per roleMatrix.coupons in src/shared/model/roles.ts). Also read and partially
+    // written by the Krysstal Flutter app at checkout: a signed-in customer looks up a coupon by
+    // code and, on successful redemption, bumps usedCount and appends their own uid to
+    // usedByUserIds directly via the client Firestore SDK (no backend function is involved).
+    // Read is auth-gated rather than public (unlike categories/config) since coupon terms
+    // (usage limits, exclusions) aren't meant to be scraped by anonymous clients.
+    match /coupons/{id} {
+      allow read: if request.auth != null;
+
+      // Admin console: full create/update/delete via the coupon create/edit dialog.
+      allow create, delete: if request.auth != null && callerRole() == 'admin';
+      allow update: if request.auth != null && callerRole() == 'admin';
+
+      // Customer redemption: exactly one usage increment plus appending exactly the caller's own
+      // uid to usedByUserIds, and nothing else. Blocks a client from editing coupon terms,
+      // jumping usedCount by more than 1 per write, or crediting/removing someone else's
+      // redemption.
+      allow update: if request.auth != null &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedCount', 'usedByUserIds']) &&
+        request.resource.data.usedCount == resource.data.usedCount + 1 &&
+        request.resource.data.usedByUserIds == resource.data.usedByUserIds.concat([request.auth.uid]);
+    }
+
+    // Customer accounts for the Krysstal storefront app (KrysstalUser in the Flutter app's
+    // lib/config/entities/user_entity.dart). Doc id = Firebase Auth uid. Created directly by the
+    // app's AuthService on signup/first social login, and self-updated by AuthService (linking a
+    // new auth provider, registering a device token), ProfileService (name/phone, marking email
+    // verified), WishlistService (wishlist array) and GstService (gst details) — all direct
+    // client writes to the caller's own doc, no backend function involved. The admin console
+    // (users-store.ts loadUsers/setUserFlagged) only ever reads the directory and toggles the
+    // "Flag account" action, matching roleMatrix.users in src/shared/model/roles.ts (admin +
+    // support_agent, not catalog_manager). Self-checks are ordered before callerRole() throughout,
+    // same reasoning as coinTransactions above — a plain customer has no admins/{uid} doc for
+    // callerRole() to read.
+    match /users/{uid} {
+      allow read: if request.auth != null &&
+        (request.auth.uid == uid || callerRole() in ['admin', 'support_agent']);
+
+      // Signup (email or first social sign-in) creates the caller's own doc. coinBalance and
+      // isFlagged are the only fields with real value/moderation implications, so those are
+      // pinned to their safe starting values regardless of what the client submits — everything
+      // else in KrysstalUser.toJson() is the new account's own profile data.
+      allow create: if request.auth != null && request.auth.uid == uid &&
+        request.resource.data.coinBalance == 0 &&
+        request.resource.data.isFlagged == false;
+
+      allow update: if request.auth != null &&
+        (
+          (request.auth.uid == uid &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+              ['name', 'phone', 'authProviders', 'tokens', 'emailVerified', 'wishlists', 'gst', 'updatedAt']
+            )) ||
+          (callerRole() in ['admin', 'support_agent'] &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isFlagged', 'updatedAt']))
+        );
+
+      allow delete: if false;
+    }
+
+    // Coin transaction ledger (coins-store.ts loadCoinTransactions in krysstal-admin; CoinService
+    // fetchTransactionsForCurrentUser in the Flutter app's lib/core/profile/services). The only
+    // writer is the adjustCoinBalance Cloud Function (functions/src/features/coins), which uses
+    // the Admin SDK and bypasses these rules entirely, so write is always false here. Read checks
+    // the caller's own uid first, before callerRole() — a signed-in customer has no admins/{uid}
+    // doc, so callerRole() would error for them; ordering the self-check first short-circuits the
+    // || before that happens, letting a customer read their own transactions while admins can
+    // still read everyone's.
+    match /coinTransactions/{id} {
+      allow read: if request.auth != null &&
+        (resource.data.uid == request.auth.uid || callerRole() == 'admin');
+      allow write: if false;
     }
 
     // Default-deny backstop: nothing outside the explicit match blocks above is readable or

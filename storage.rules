@@ -18,6 +18,37 @@ service firebase.storage {
         ) in ['admin', 'catalog_manager'];
     }
 
+    // Category tree images uploaded by the admin console (src/lib/storage.ts
+    // uploadImageIfNeeded(), called from categories-store.ts saveCategory()). Path convention:
+    // categories/{categoryId}/{randomId} — categoryId is the category doc's generated id.
+    // Publicly readable (shown on the storefront/mobile category grid); writable only by staff
+    // whose effective role is admin or catalog_manager, matching categories/{id}'s Firestore rule
+    // — same claim-then-Firestore-fallback pattern as firestore.rules' callerRole(), duplicated
+    // here since Storage rules can't share a function with Firestore rules. Keep both in sync.
+    match /categories/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null &&
+        ('role' in request.auth.token
+          ? request.auth.token.role
+          : firestore.get(/databases/(default)/documents/admins/$(request.auth.uid)).data.role
+        ) in ['admin', 'catalog_manager'];
+    }
+
+    // Home screen carousel images (src/lib/storage.ts uploadImageIfNeeded(), called from
+    // content-store.ts addCarouselImage()). Path convention: home-carousel/{categoryId}/{randomId}.
+    // Publicly readable (shown on the storefront home screen); writable only by staff whose
+    // effective role is admin, matching config/homeCarousel's Firestore rule (admin-only, not
+    // admin+catalog_manager like catalogs/ above) — same claim-then-Firestore-fallback pattern,
+    // duplicated here since Storage rules can't share a function with Firestore rules.
+    match /home-carousel/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null &&
+        ('role' in request.auth.token
+          ? request.auth.token.role
+          : firestore.get(/databases/(default)/documents/admins/$(request.auth.uid)).data.role
+        ) == 'admin';
+    }
+
     // Default-deny backstop: nothing outside the explicit match blocks above is readable or
     // writable from a client SDK.
     match /{allPaths=**} {
