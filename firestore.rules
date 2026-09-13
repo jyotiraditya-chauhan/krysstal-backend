@@ -163,6 +163,25 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Per-user notification inbox items from sendNotification, plus shared broadcast items
+    // (to == 'bulk') from broadcastNotification (functions/src/features/notifications), both of
+    // which use the Admin SDK and bypass these rules entirely — create/delete are always false
+    // here. Self-check ordered before callerRole(), same reasoning as coinTransactions and
+    // users/{uid} above. Update is scoped to isRead/updatedAt only, so the Flutter app's inbox
+    // screen can mark a personal notification read directly via the client SDK — this does not
+    // apply to a 'bulk' doc, which has no single owner to scope a per-user read receipt to and
+    // is therefore read-only for customers by design.
+    match /notifications/{id} {
+      allow read: if request.auth != null &&
+        (resource.data.to == request.auth.uid || resource.data.to == 'bulk' ||
+          callerRole() in ['admin', 'catalog_manager', 'support_agent']);
+
+      allow update: if request.auth != null && resource.data.to == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'updatedAt']);
+
+      allow create, delete: if false;
+    }
+
     // Default-deny backstop: nothing outside the explicit match blocks above is readable or
     // writable from a client SDK.
     match /{document=**} {
